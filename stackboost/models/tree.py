@@ -1,13 +1,14 @@
 from __future__ import division, print_function
 import numpy as np
 
-from stackboost.utils import divide_on_feature, train_test_split, standardize, mean_squared_error
-from stackboost.utils import calculate_entropy, accuracy_score, calculate_variance, to_array
+from stackboost.utils.data_manipulation import divide_on_feature, train_test_split, standardize, to_array
+from stackboost.utils.data_operation import calculate_entropy, accuracy_score, calculate_variance, calculate_covariance
 import torch
 import pandas as pd
 from sklearn.linear_model import LogisticRegression, LinearRegression
 import warnings
 import copy
+
 warnings.filterwarnings("ignore")
 SUPPORTED_ARRAYS = [np.ndarray, torch.tensor, pd.Series, pd.DataFrame, list]
 
@@ -29,7 +30,7 @@ class DecisionNode():
         Next decision node for samples where features value did not meet the threshold.
     """
 
-    def __init__(self, feature_i=None, threshold=None, value=None, true_branch=None, false_branch=None):
+    def __init__(self, feature_i: int=None, threshold: float=None, value=None, true_branch=None, false_branch=None):
         self.feature_i = feature_i  # Index for the feature that is tested
         self.threshold = threshold  # Threshold value for feature
         self.value = value  # Value if the node is a leaf in the tree
@@ -52,7 +53,7 @@ class DecisionTree(object):
         Loss function that is used for Gradient Boosting models to calculate impurity.
     """
 
-    def __init__(self, leaf_estimator, min_samples_split=2, min_impurity=1e-7, max_depth=float("inf"), loss=None):
+    def __init__(self, leaf_estimator = None, min_samples_split=2, min_impurity=1e-7, max_depth=float("inf"), loss=None):
         self.leaf_estimator = leaf_estimator
         self.root = None  # Root node in dec. tree
         # Minimum n of samples to justify split
@@ -155,9 +156,7 @@ class DecisionTree(object):
         if tree.value is not None:
             if type(tree.value) == type(self.leaf_estimator):
                 X = np.expand_dims(X, axis=0)
-                print("---")
                 return tree.value.predict(X)[0][0]
-            print("-----------------------------------------------------------------------------------------------------------------")
             return tree.value
 
         # Choose the feature that we will test
@@ -179,14 +178,6 @@ class DecisionTree(object):
         y_pred = [self.predict_value(sample) for sample in X]
         return y_pred
 
-    def leaf_training(self, X, y):
-        n_unique = np.unique(y)
-        if len(n_unique) == 1:
-            return y[0]
-        model = copy.copy(self.leaf_estimator)
-        model.fit(X, y)
-        return model
-
     def print_tree(self, tree=None, indent=" "):
         """ Recursively print the decision tree """
         if not tree:
@@ -194,7 +185,7 @@ class DecisionTree(object):
 
         # If we're at leaf => print the label
         if tree.value is not None:
-            return tree.value # Go deeper down the tree
+            return tree.value  # Go deeper down the tree
         else:
             # Print test
             print("%s:%s? " % (tree.feature_i, tree.threshold))
@@ -206,7 +197,7 @@ class DecisionTree(object):
             self.print_tree(tree.false_branch, indent + indent)
 
 
-class RegressionTree(DecisionTree):
+class StackedTreeRegressor(DecisionTree):
     def _calculate_variance_reduction(self, y, y1, y2):
         var_tot = calculate_variance(y)
         var_1 = calculate_variance(y1)
@@ -218,13 +209,25 @@ class RegressionTree(DecisionTree):
         variance_reduction = var_tot - (frac_1 * var_1 + frac_2 * var_2)
 
         return sum(variance_reduction)
+
+    def regression_leaf_training(self, X, y):
+        n_unique = np.unique(y)
+        if self.leaf_estimator == None or len(n_unique) == 1:
+            value = np.mean(y, axis=0)
+            return value if len(value) > 1 else value[0]
+
+        model = copy.copy(self.leaf_estimator)
+        model.fit(X, y)
+        return model
+
     # ADD: categorical_encoding
     def fit(self, X, y, sample_weight=None):
         self._impurity_calculation = self._calculate_variance_reduction
-        super(RegressionTree, self).fit(X, y, sample_weight)
+        self.leaf_training = self.regression_leaf_training
+        super(StackedTreeRegressor, self).fit(X, y, sample_weight)
 
 
-class ClassificationTree(DecisionTree):
+class StackedTreeClassifier(DecisionTree):
     def _calculate_information_gain(self, y, y1, y2):
         # Calculate information gain
         p = len(y1) / len(y)
@@ -233,7 +236,25 @@ class ClassificationTree(DecisionTree):
 
         return info_gain
 
+    def classification_leaf_training(self, X, y):
+        n_unique = np.unique(y)
+        if self.leaf_estimator == None or len(n_unique) == 1:
+            most_common = None
+            max_count = 0
+            for label in np.unique(y):
+                # Count number of occurences of samples with label
+                count = len(y[y == label])
+                if count > max_count:
+                    most_common = label
+                    max_count = count
+            return most_common
+
+        model = copy.copy(self.leaf_estimator)
+        model.fit(X, y)
+        return model
+
     # ADD: categorical_encoding
     def fit(self, X, y, sample_weight=None):
         self._impurity_calculation = self._calculate_information_gain
-        super(ClassificationTree, self).fit(X, y, sample_weight)
+        self.leaf_training = self.classification_leaf_training
+        super(StackedTreeClassifier, self).fit(X, y, sample_weight)

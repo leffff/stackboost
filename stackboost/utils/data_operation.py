@@ -1,9 +1,11 @@
 from __future__ import division
 import numpy as np
 import math
+from numba import jit
 import sys
 
 
+@jit(nopython=True)
 def calculate_entropy(y):
     """ Calculate the entropy of label array y """
     log2 = lambda x: math.log(x) / math.log(2)
@@ -22,13 +24,15 @@ def mean_squared_error(y_true, y_pred):
     return mse
 
 
+@jit(nopython=True)
 def calculate_variance(X):
     """ Return the variance of the features in dataset X """
-    mean = np.ones(np.shape(X)) * X.mean(0)
-    n_samples = np.shape(X)[0]
-    variance = (1 / n_samples) * np.diag((X - mean).T.dot(X - mean))
-    
-    return variance
+    # mean = np.ones(np.shape(X)) * X.mean(0)
+    # n_samples = np.shape(X)[0]
+    # variance = (1 / n_samples) * np.diag((X - mean).T.dot(X - mean))
+    # return variance
+    var = np.sum((X - X.mean()) ** 2) / len(X)
+    return var
 
 
 def calculate_std_dev(X):
@@ -57,10 +61,23 @@ def calculate_covariance_matrix(X, Y=None):
     if Y is None:
         Y = X
     n_samples = np.shape(X)[0]
-    covariance_matrix = (1 / (n_samples-1)) * (X - X.mean(axis=0)).T.dot(Y - Y.mean(axis=0))
+    covariance_matrix = (1 / (n_samples - 1)) * (X - X.mean(axis=0)).T.dot(Y - Y.mean(axis=0))
 
     return np.array(covariance_matrix, dtype=float)
- 
+
+
+def calculate_covariance(X, y):
+    return np.sum((X - X.mean()) * (y - y.mean())) / len(X)
+
+
+@jit(nopython=True)
+def calculate_dispersion(X):
+    return np.sum((X - X.mean()) ** 2)
+
+
+def calculate_correlation(X, y):
+    return calculate_covariance(X, y) / np.sqrt(calculate_variance(X) * calculate_variance(y))
+
 
 def calculate_correlation_matrix(X, Y=None):
     """ Calculate the correlation matrix for the dataset X """
