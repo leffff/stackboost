@@ -18,6 +18,12 @@ def calculate_entropy(y):
     return entropy
 
 
+@jit(nopython=True)
+def similarity_score(y, reg):
+    return (np.sum(y) ** 2) / (len(y) + reg)
+
+
+@jit(nopython=True)
 def mean_squared_error(y_true, y_pred):
     """ Returns the mean squared error between y_true and y_pred """
     mse = np.mean(np.power(y_true - y_pred, 2))
