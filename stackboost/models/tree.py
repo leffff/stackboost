@@ -19,21 +19,6 @@ SUPPORTED_ARRAYS = [np.ndarray, torch.tensor, pd.Series, pd.DataFrame, list]
 
 
 class DecisionNode():
-    """Class that represents a decision node or leaf in the decision tree
-    Parameters:
-    -----------
-    feature_i: int
-        Feature index which we want to use as the threshold measure.
-    threshold: float
-        The value that we will compare feature values at feature_i against to
-        determine the prediction.
-    value: float
-        The class prediction if classification tree, or float value if regression tree.
-    true_branch: DecisionNode
-        Next decision node for samples where features value met the threshold.
-    false_branch: DecisionNode
-        Next decision node for samples where features value did not meet the threshold.
-    """
 
     def __init__(self, feature_i=None, threshold=None, value=None, true_branch=None, false_branch=None):
         self.feature_i = feature_i  # Index for the feature that is tested
@@ -44,19 +29,6 @@ class DecisionNode():
 
 
 class DecisionTree(object):
-    """Super class of RegressionTree and ClassificationTree.
-    Parameters:
-    -----------
-    min_samples_split: int
-        The minimum number of samples needed to make a split when building a tree.
-    min_impurity: float
-        The minimum impurity required to split the tree further.
-    max_depth: int
-        The maximum depth of a tree.
-    loss: function
-        Loss function that is used for Gradient Boosting models to calculate impurity.
-    """
-
     def __init__(self, leaf_estimator=None, min_samples_split: int = 2, min_impurity: float = 1e-7,
                  max_depth: int = float("inf"), l2_leaf_reg: float = 0.0, loss_function=None):
         self.leaf_estimator = leaf_estimator

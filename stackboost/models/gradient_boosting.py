@@ -8,17 +8,23 @@ from copy import copy
 
 
 class StackedGradientBoostingRegressor:
-    def __init__(self, estimator=None, n_estimators=50, learning_rate=0.01, loss_function=SquareLoss()):
+    def __init__(self, estimator=None, n_estimators=50, learning_rate=0.01, loss_function=SquareLoss(), verbose: bool=True):
         self.n_estimators = n_estimators
         self.learning_rate = learning_rate
         self.loss_function = loss_function
         self.model = estimator
+        self.verbose=verbose
         self.models = None
         self.fitted = False
 
     def fit(self, X, y, eval_set=None, cat_features=None):
         X, y = to_array(X), to_array(y)
-        X_test, y_test = eval_set
+
+        test_pres = False
+        if eval_set != None:
+            test_pres = True
+            X_test, y_test = eval_set
+
         self.initial_preds = np.array([y.mean() for i in range(len(y))])
         residuals = self.loss_function.gradient(y, self.initial_preds)
 
@@ -29,7 +35,6 @@ class StackedGradientBoostingRegressor:
         pseudo_residuals = [residuals]
 
         for i in range(self.n_estimators):
-            print(i)
             model = copy(self.model)
             model.fit(X, pseudo_residuals[-1], cat_features=cat_features)
             self.models.append(model)
@@ -37,8 +42,19 @@ class StackedGradientBoostingRegressor:
             preds = model.predict(X) * self.learning_rate + predictions[-1]
             predictions.append(preds)
 
-            self.train_errors.append(self.loss_function.loss(y, preds))
-            self.test_errors.append(self.loss_function.loss(y_test, self.__inner_predict(X_test)))
+            train_error = self.loss_function.loss(y, preds)
+            self.train_errors.append(train_error)
+
+            if test_pres:
+                test_terror = self.loss_function.loss(y_test, self.__inner_predict(X_test))
+                self.test_errors.append(test_terror)
+
+            if self.verbose:
+                train_print = f"Estimator: {i} Train: {train_error}"
+                test_print = ""
+                if test_pres:
+                    test_print = "Test: {test_terror}"
+                print(train_print + test_print)
 
             residuals -= self.loss_function.gradient(y, preds)
             pseudo_residuals.append(residuals)
@@ -53,6 +69,9 @@ class StackedGradientBoostingRegressor:
         return y_pred
 
     def plot(self):
+        if not self.fitted:
+            raise NotFittedError()
+
         iterations = [i for i in range(self.n_estimators)]
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=iterations, y=self.train_errors,

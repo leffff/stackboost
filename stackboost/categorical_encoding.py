@@ -16,6 +16,7 @@ class StackedEncoder:
     """
     Categorical feature incoding model
     """
+
     def __init__(self, strategy: str = "mean", regression: bool = True):
         self.strategy = strategy
         if self.strategy != None:
@@ -25,7 +26,8 @@ class StackedEncoder:
 
             self.strategy = self.strategy.lower()
             if self.strategy not in list(self.strategies.keys()):
-                raise ValueError("Given strategy type", self.strategy, "allowed," ', '.join(list(self.strategies.keys())))
+                raise ValueError("Given strategy type", self.strategy,
+                                 "allowed," ', '.join(list(self.strategies.keys())))
         self.regression = regression
         self.fitted = False
 
@@ -41,6 +43,8 @@ class StackedEncoder:
             self.cat_features = np.array([i for i in range(self.n_features)])
 
         self.__target(X, y)
+
+        self.fitted = True
 
     def __target(self, X: np.ndarray, y: np.ndarray) -> None:
         if self.regression:
@@ -67,6 +71,9 @@ class StackedEncoder:
                 self.mappers = np.append(self.mappers, counts)
 
     def transform(self, X: np.ndarray) -> np.ndarray:
+        if not self.fitted:
+            raise NotFittedError()
+
         X_array = to_array(X)
         n_features_test = X_array.shape[1]
         if self.n_features != n_features_test:
