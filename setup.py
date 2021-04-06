@@ -5,16 +5,16 @@ with open("README.md", "r") as f:
 
 setuptools.setup(
     name="waveml",
-    version="0.2.0",
+    version="0.1.0",
     author="leffff",
     author_email="levnovitskiy@gmail.com",
-    description="Open source machine learning library with various models and tools",
+    description="Stacked decision trees algorithm",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/leffff/waveml",
+    url="https://github.com/leffff/stackboost",
     license='Apache License 2.0',
     packages=setuptools.find_packages(),
-    install_requires=["numpy", "pandas", "scikit-learn", "matplotlib", "torch", "torchvision"],
+    install_requires=["numpy", "pandas", "scikit-learn", "matplotlib", "numba"],
     classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
