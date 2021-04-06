@@ -14,7 +14,7 @@ setuptools.setup(
     url="https://github.com/leffff/stackboost",
     license='Apache License 2.0',
     packages=setuptools.find_packages(),
-    install_requires=["numpy", "pandas", "scikit-learn", "matplotlib", "numba"],
+    install_requires=["numpy", "scikit-learn", "numba", "plotly"],
     classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
