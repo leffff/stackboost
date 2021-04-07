@@ -1,2 +1,2 @@
 # stackboost
-Adaptive boosting over decision trees
+Stacked decision trees algorithm

@@ -18,10 +18,13 @@ class SquareLoss(Loss):
     def __init__(self): pass
 
     def loss(self, y, y_pred):
-        return 0.5 * np.power((y - y_pred), 2)
+        return np.sum(0.5 * np.power((y - y_pred), 2))
 
     def gradient(self, y, y_pred):
         return -(y - y_pred)
+
+    def hess(self, y, y_pred):
+        return np.array([1 for i in range(len(y))])
 
 
 class CrossEntropy(Loss):

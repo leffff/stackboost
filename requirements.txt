@@ -1,6 +1,5 @@
 numpy
 pandas
-scikit-learn
-torchvision
-matplotlib
+torch
+plotly
 numba
