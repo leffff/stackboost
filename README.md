@@ -1,5 +1,5 @@
 # stackboost
-Adaptive boosting over decision trees
+Stacked decision trees algorithm
 
 TODO:
 1. Finish classification and regression trees

@@ -39,7 +39,7 @@ class StackedEncoder:
         self.n_features = X.shape[1]
 
         self.cat_features = cat_features
-        if self.cat_features == None:
+        if type(self.cat_features) not in SUPPORTED_ARRAYS:
             self.cat_features = np.array([i for i in range(self.n_features)])
 
         self.__target(X, y)

@@ -4,7 +4,7 @@ with open("README.md", "r") as f:
     long_description = f.read()
 
 setuptools.setup(
-    name="waveml",
+    name="stackboost",
     version="0.1.0",
     author="leffff",
     author_email="levnovitskiy@gmail.com",
@@ -12,9 +12,9 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/leffff/stackboost",
-    license='Apache License 2.0',
+    license='MIT',
     packages=setuptools.find_packages(),
-    install_requires=["numpy", "scikit-learn", "numba", "plotly"],
+    install_requires=["numpy", "pandas", "torch", "plotly", "numba"],
     classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",

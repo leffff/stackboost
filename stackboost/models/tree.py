@@ -20,17 +20,18 @@ SUPPORTED_ARRAYS = [np.ndarray, torch.tensor, pd.Series, pd.DataFrame, list]
 
 class DecisionNode():
 
-    def __init__(self, feature_i=None, threshold=None, value=None, true_branch=None, false_branch=None):
+    def __init__(self, feature_i=None, threshold=None, value=None, target=None, true_branch=None, false_branch=None):
         self.feature_i = feature_i  # Index for the feature that is tested
         self.threshold = threshold  # Threshold value for feature
         self.value = value  # Value if the node is a leaf in the tree
+        self.target=target
         self.true_branch = true_branch  # 'Left' subtree
         self.false_branch = false_branch  # 'Right' subtree
 
 
 class DecisionTree(object):
     def __init__(self, leaf_estimator=None, min_samples_split: int = 2, min_impurity: float = 1e-7,
-                 max_depth: int = float("inf"), l2_leaf_reg: float = 0.0, loss_function=None):
+                 max_depth: int = float("inf"), l2_leaf_reg: float = 0.0, n_quantiles: int = 33, loss_function=None):
         self.leaf_estimator = leaf_estimator
         self.root = None  # Root node in dec. tree
         # Minimum n of samples to justify split
@@ -40,6 +41,7 @@ class DecisionTree(object):
         # The maximum depth to grow the tree to
         self.max_depth = max_depth
         self.l2_leaf_reg = l2_leaf_reg
+        self.n_quantiles = n_quantiles
         # Function to calculate impurity (classif.=>info gain, regr=>variance reduct.)
         self._impurity_calculation = None
         # Function to determine prediction of y at leaf
@@ -88,11 +90,16 @@ class DecisionTree(object):
             for feature_i in range(n_features):
                 # All values of feature_i
                 feature_values = np.expand_dims(X[:, feature_i], axis=1)
-                unique_values = np.unique(feature_values)
+                if len(np.unique(feature_values)) > self.n_quantiles:
+                    delta = np.max(feature_values) - np.min(feature_values)
+                    quintile_size = delta / self.n_quantiles
+                    quintiles = np.array([quintile_size * (i + 1) for i in range(self.n_quantiles)])
+                else:
+                    quintiles = np.unique(feature_values)
 
                 # Iterate through all unique values of feature column i and
                 # calculate the impurity
-                for threshold in unique_values:
+                for threshold in quintiles:
                     # Divide X and y depending on if the feature value of X at index feature_i
                     # meets the threshold
                     Xy1, Xy2 = divide_on_feature(Xy, feature_i, threshold)
@@ -121,7 +128,7 @@ class DecisionTree(object):
             true_branch = self._build_tree(best_sets["leftX"], best_sets["lefty"], current_depth + 1)
             false_branch = self._build_tree(best_sets["rightX"], best_sets["righty"], current_depth + 1)
             return DecisionNode(feature_i=best_criteria["feature_i"], threshold=best_criteria[
-                "threshold"], true_branch=true_branch, false_branch=false_branch)
+                "threshold"], true_branch=true_branch, false_branch=false_branch, target=y)
 
         # We're at leaf => determine value
         leaf_value = self.leaf_training(X, y)
