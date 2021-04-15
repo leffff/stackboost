@@ -49,9 +49,12 @@ class StackedGradientBoostingRegressor:
         predictions = [self.initial_preds]
         pseudo_residuals = [residuals]
 
+        self.n_festures = X.shape[1]
+        weights = [[1 / self.n_festures for i in range(self.n_festures)]]
+
         for i in range(self.n_estimators):
             model = copy(self.model)
-            model.fit(X, pseudo_residuals[-1])
+            model.fit(X, pseudo_residuals[-1], sample_weight=weights[-1])
             self.models.append(model)
 
             preds = model.predict(X) * self.learning_rate + predictions[-1]
@@ -73,6 +76,8 @@ class StackedGradientBoostingRegressor:
 
             residuals -= self.loss_function.gradient(y, preds)
             pseudo_residuals.append(residuals)
+
+            weights.append(1 - np.array(list(model.get_feature_importance().values())))
 
         self.fitted = True
 

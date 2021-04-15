@@ -5,7 +5,7 @@ with open("README.md", "r") as f:
 
 setuptools.setup(
     name="stackboost",
-    version="0.1.0",
+    version="0.1.2",
     author="leffff",
     author_email="levnovitskiy@gmail.com",
     description="Stacked decision trees algorithm",

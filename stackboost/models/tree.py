@@ -9,6 +9,7 @@ from stackboost.categorical_encoding import StackedEncoder
 import torch
 import pandas as pd
 from sklearn.linear_model import LogisticRegression, LinearRegression
+from stackboost.loss_functions import MSE
 import warnings
 import copy
 from numba import jit, int32, float32
@@ -31,7 +32,7 @@ class DecisionNode():
 
 class DecisionTree(object):
     def __init__(self, leaf_estimator=None, min_samples_split: int = 2, min_impurity: float = 1e-7,
-                 max_depth: int = float("inf"), l2_leaf_reg: float = 0.0, n_quantiles: int = 33, loss_function=None):
+                 max_depth: int = float("inf"), l2_leaf_reg: float = 0.0, n_quantiles: int = 33, loss_function=mean_squared_error):
         self.leaf_estimator = leaf_estimator
         self.root = None  # Root node in dec. tree
         # Minimum n of samples to justify split
@@ -53,6 +54,7 @@ class DecisionTree(object):
         self.sample_weight = None
         self.loss_function = loss_function
         self.encoder = StackedEncoder()
+        self.used_features = []
 
     def fit(self, X, y, sample_weight=None, cat_features=None):
         """ Build decision tree """
@@ -72,7 +74,6 @@ class DecisionTree(object):
     def _build_tree(self, X, y, current_depth=0):
         """ Recursive method which builds out the decision tree and splits X and respective y
         on the feature of X which (based on impurity) best separates the data"""
-
         largest_impurity = 0
         best_criteria = None  # Feature index and threshold
         best_sets = None  # Subsets of the data
@@ -123,12 +124,16 @@ class DecisionTree(object):
                                 "righty": Xy2[:, n_features:]  # y of right subtree
                             }
 
+                            self.used_features.append(feature_i)
+
         if largest_impurity > self.min_impurity:
             # Build subtrees for the right and left branches
             true_branch = self._build_tree(best_sets["leftX"], best_sets["lefty"], current_depth + 1)
             false_branch = self._build_tree(best_sets["rightX"], best_sets["righty"], current_depth + 1)
             return DecisionNode(feature_i=best_criteria["feature_i"], threshold=best_criteria[
                 "threshold"], true_branch=true_branch, false_branch=false_branch, target=y)
+
+
 
         # We're at leaf => determine value
         leaf_value = self.leaf_training(X, y)
@@ -171,6 +176,26 @@ class DecisionTree(object):
 
         y_pred = np.array([self.predict_value(sample) for sample in X])
         return y_pred
+
+    def get_feature_importance(self):
+        importance_count = {}
+        for feature in range(self.n_features):
+            importance_count[feature] = 0
+
+        for features in self.used_features:
+            importance_count[features] += 1
+
+        all_counts = sum(list(importance_count.values()))
+
+        perc_importance = {}
+        for feature in range(self.n_features):
+            perc_importance[feature] = importance_count.get(feature) / all_counts
+
+        # key = lambda array: array[1]
+        # importatces = np.hstack([np.array(list(perc_importance.keys())).reshape(-1, 1), np.array(list(perc_importance.values())).reshape(-1, 1)])
+        # return np.array(list(sorted(importatces, key=key)))
+
+        return perc_importance
 
     def print_tree(self, tree=None, indent=" "):
         """ Recursively print the decision tree """
@@ -267,9 +292,9 @@ class ErrorTreeRegressor(DecisionTree):
         mean_tot = np.zeros(len(y))
         mean_tot.fill(y.mean())
 
-        total = tot_disp * self.loss_function.loss(y, mean_tot) / (len(y) + self.l2_leaf_reg)
-        left = disp_1 * self.loss_function.loss(y1, mean_1) / (len(y1) + self.l2_leaf_reg)
-        right = disp_2 * self.loss_function.loss(y2, mean_2) / (len(y2) + self.l2_leaf_reg)
+        total = tot_disp * self.loss_function(y, mean_tot) / (len(y) + self.l2_leaf_reg)
+        left = disp_1 * self.loss_function(y1, mean_1) / (len(y1) + self.l2_leaf_reg)
+        right = disp_2 * self.loss_function(y2, mean_2) / (len(y2) + self.l2_leaf_reg)
 
         variance_reduction = total - (left + right)
 
