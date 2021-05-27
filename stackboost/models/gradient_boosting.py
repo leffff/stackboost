@@ -8,119 +8,104 @@ import pandas as pd
 import numpy as np
 from copy import copy
 
-SUPPORTED_ARRAYS = [np.ndarray, torch.tensor, pd.Series, pd.DataFrame, list]
+# Import helper functions
+from stackboost.utils.data_manipulation import train_test_split, standardize, to_categorical, normalize
+from stackboost.loss_functions import SquareLoss, CrossEntropy
+from stackboost.models.tree import TreeRegressor, TreeClassifier
 
 
-class StackedGradientBoostingRegressor:
-    def __init__(self, estimator=None, n_estimators=50, learning_rate=0.01, loss_function=SquareLoss(),
-                 verbose: bool = True):
+class GradientBoosting(object):
+    """Super class of GradientBoostingClassifier and GradientBoostinRegressor.
+    Uses a collection of regression trees that trains on predicting the gradient
+    of the loss function.
+    Parameters:
+    -----------
+    n_estimators: int
+        The number of classification trees that are used.
+    learning_rate: float
+        The step length that will be taken when following the negative gradient during
+        training.
+    min_samples_split: int
+        The minimum number of samples needed to make a split when building a tree.
+    min_impurity: float
+        The minimum impurity required to split the tree further.
+    max_depth: int
+        The maximum depth of a tree.
+    regression: boolean
+        True or false depending on if we're doing regression or classification.
+    """
+
+    def __init__(self, n_estimators, learning_rate, min_samples_split,
+                 min_impurity, max_depth, regression):
         self.n_estimators = n_estimators
         self.learning_rate = learning_rate
-        self.loss_function = loss_function
-        self.model = estimator
-        self.verbose = verbose
-        self.use_best_model = None
-        self.models = None
-        self.fitted = False
-        self.encoder = None
+        self.min_samples_split = min_samples_split
+        self.min_impurity = min_impurity
+        self.max_depth = max_depth
+        self.regression = regression
 
-    def fit(self, X, y, eval_set=None, cat_features=None, use_best_model: bool = True):
-        X, y = to_array(X), to_array(y)
+        # Square loss for regression
+        # Log loss for classification
+        self.loss = SquareLoss()
+        if not self.regression:
+            self.loss = CrossEntropy()
 
-        self.test_pres = False
-        if eval_set != None:
-            self.test_pres = True
-            X_test, y_test = eval_set
+        # Initialize regression trees
+        self.trees = []
+        tree_type = TreeRegressor if self.regression else TreeClassifier
+        for _ in range(n_estimators):
+            tree = TreeRegressor(
+                min_samples_split=self.min_samples_split,
+                min_impurity=min_impurity,
+                max_depth=self.max_depth)
+            self.trees.append(tree)
 
-        self.cat_features = cat_features
-        if type(self.cat_features) in SUPPORTED_ARRAYS:
-            print("Encoded")
-            self.encoder = StackedEncoder()
-            X = self.encoder.fit_transform(X, y, cat_features=self.cat_features)
-
-        self.use_best_model = use_best_model
-
-        self.initial_preds = np.array([y.mean() for i in range(len(y))])
-        residuals = self.loss_function.gradient(y, self.initial_preds)
-
-        self.models = []
-        self.train_errors = np.array([])
-        self.test_errors = np.array([])
-        predictions = [self.initial_preds]
-        pseudo_residuals = [residuals]
-
-        self.n_festures = X.shape[1]
-        weights = [[1 / self.n_festures for i in range(self.n_festures)]]
-
+    def fit(self, X, y):
+        y_pred = np.full(np.shape(y), np.mean(y, axis=0))
         for i in range(self.n_estimators):
-            model = copy(self.model)
-            model.fit(X, pseudo_residuals[-1], sample_weight=weights[-1])
-            self.models.append(model)
-
-            preds = model.predict(X) * self.learning_rate + predictions[-1]
-            predictions.append(preds)
-
-            train_error = self.loss_function.loss(y, preds)
-            self.train_errors = np.append(self.train_errors, train_error)
-
-            if self.test_pres:
-                test_error = self.loss_function.loss(y_test, self.__inner_predict(X_test))
-                self.test_errors = np.append(self.test_errors, test_error)
-
-            if self.verbose:
-                train_print = f"Estimator: {i} Train: {train_error}"
-                test_print = ""
-                if self.test_pres:
-                    test_print = f" Test: {test_error}"
-                print(train_print + test_print)
-
-            residuals -= self.loss_function.gradient(y, preds)
-            pseudo_residuals.append(residuals)
-
-            weights.append(1 - np.array(list(model.get_feature_importance().values())))
-
-        self.fitted = True
-
-    def __inner_predict(self, X):
-        X = to_array(X)
-        y_pred = np.array([self.initial_preds[0] for i in range(len(X))])
-        for i in range(len(self.models)):
-            y_pred += self.models[i].predict(X) * self.learning_rate
-        return y_pred
-
-    def plot(self):
-        if not self.fitted:
-            raise NotFittedError()
-
-        iterations = [i for i in range(self.n_estimators)]
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=iterations, y=self.train_errors,
-                                 mode='lines',
-                                 name='train'))
-        fig.add_trace(go.Scatter(x=iterations, y=self.test_errors,
-                                 mode='lines',
-                                 name='test'))
-        fig.show()
+            print(i)
+            gradient = self.loss.gradient(y, y_pred)
+            self.trees[i].fit(X, gradient)
+            update = self.trees[i].predict(X)
+            y_pred -= np.multiply(self.learning_rate, update)
 
     def predict(self, X):
-        if not self.fitted:
-            raise NotFittedError()
+        y_pred = np.array([])
+        # Make predictions
+        for tree in self.trees:
+            update = tree.predict(X)
+            update = np.multiply(self.learning_rate, update)
+            y_pred = -update if not y_pred.any() else y_pred - update
 
-        if type(self.cat_features) in SUPPORTED_ARRAYS and self.encoder != None:
-            X = self.encoder.transform(X)
-
-        X = to_array(X)
-        y_pred = np.array([self.initial_preds[0] for i in range(len(X))])
-
-        if self.use_best_model:
-            if self.test_pres:
-                models = self.models[:np.argmin(self.test_errors)]
-            else:
-                models = self.models[:np.argmin(self.train_errors)]
-        else:
-            models = self.models
-
-        for i in range(len(models)):
-            y_pred += self.models[i].predict(X) * self.learning_rate
-
+        if not self.regression:
+            # Turn into probability distribution
+            y_pred = np.exp(y_pred) / np.expand_dims(np.sum(np.exp(y_pred), axis=1), axis=1)
+            # Set label to the value that maximizes probability
+            y_pred = np.argmax(y_pred, axis=1)
         return y_pred
+
+
+class GradientBoostingRegressor(GradientBoosting):
+    def __init__(self, n_estimators=200, learning_rate=0.5, min_samples_split=2,
+                 min_var_red=1e-7, max_depth=4, debug=False):
+        super(GradientBoostingRegressor, self).__init__(n_estimators=n_estimators,
+                                                        learning_rate=learning_rate,
+                                                        min_samples_split=min_samples_split,
+                                                        min_impurity=min_var_red,
+                                                        max_depth=max_depth,
+                                                        regression=True)
+
+
+class GradientBoostingClassifier(GradientBoosting):
+    def __init__(self, n_estimators=200, learning_rate=.05, min_samples_split=2,
+                 min_info_gain=1e-7, max_depth=4, debug=False):
+        super(GradientBoostingClassifier, self).__init__(n_estimators=n_estimators,
+                                                         learning_rate=learning_rate,
+                                                         min_samples_split=min_samples_split,
+                                                         min_impurity=min_info_gain,
+                                                         max_depth=max_depth,
+                                                         regression=False)
+
+    def fit(self, X, y):
+        y = to_categorical(y)
+        super(GradientBoostingClassifier, self).fit(X, y)

@@ -2,38 +2,39 @@ from __future__ import division, print_function
 import numpy as np
 
 from stackboost.utils.data_manipulation import divide_on_feature, train_test_split, standardize, to_array
-from stackboost.utils.data_operation import calculate_entropy, accuracy_score, calculate_variance, \
-    calculate_correlation, calculate_correlation_matrix, calculate_covariance, calculate_dispersion, mean_squared_error, \
-    similarity_score
+from stackboost.utils.data_operation import calculate_entropy, mean_squared_error, similarity_score, calculate_dispersion, calculate_variance
 from stackboost.categorical_encoding import StackedEncoder
 import torch
 import pandas as pd
-from sklearn.linear_model import LogisticRegression, LinearRegression
-from stackboost.loss_functions import MSE
 import warnings
 import copy
-from numba import jit, int32, float32
-from numba.experimental import jitclass
+
+from functools import lru_cache
+
 
 warnings.filterwarnings("ignore")
 SUPPORTED_ARRAYS = [np.ndarray, torch.tensor, pd.Series, pd.DataFrame, list]
 
 
-class DecisionNode():
-
-    def __init__(self, feature_i=None, threshold=None, value=None, target=None, true_branch=None, false_branch=None):
+class DecisionNode:
+    def __init__(self, feature_i=None, threshold=None, value=None, target=None, true_branch=None,
+                 false_branch=None):
         self.feature_i = feature_i  # Index for the feature that is tested
         self.threshold = threshold  # Threshold value for feature
         self.value = value  # Value if the node is a leaf in the tree
-        self.target=target
+        self.target = target
         self.true_branch = true_branch  # 'Left' subtree
         self.false_branch = false_branch  # 'Right' subtree
 
+    def is_leaf(self):
+        return self.value != None
+
 
 class DecisionTree(object):
-    def __init__(self, leaf_estimator=None, min_samples_split: int = 2, min_impurity: float = 1e-7,
-                 max_depth: int = float("inf"), l2_leaf_reg: float = 0.0, n_quantiles: int = 33, loss_function=mean_squared_error):
-        self.leaf_estimator = leaf_estimator
+    def __init__(self, min_samples_split: int = 2, min_impurity: float = 1e-7,
+                 max_depth: int = float("inf"), l2_leaf_reg: float = 0.0, n_quantiles: int = 33,
+                 max_leaf_samples: int = 1000, prune: bool = False, gamma: int = 0, loss_function=mean_squared_error):
+
         self.root = None  # Root node in dec. tree
         # Minimum n of samples to justify split
         self.min_samples_split = min_samples_split
@@ -43,6 +44,7 @@ class DecisionTree(object):
         self.max_depth = max_depth
         self.l2_leaf_reg = l2_leaf_reg
         self.n_quantiles = n_quantiles
+        self.max_leaf_samples = max_leaf_samples
         # Function to calculate impurity (classif.=>info gain, regr=>variance reduct.)
         self._impurity_calculation = None
         # Function to determine prediction of y at leaf
@@ -52,8 +54,11 @@ class DecisionTree(object):
         # If Gradient Boost
         self.cat_features = None
         self.sample_weight = None
+        self.prune = prune
+        self.gamma = gamma
         self.loss_function = loss_function
         self.encoder = StackedEncoder()
+        self.n_leaves = 0
         self.used_features = []
 
     def fit(self, X, y, sample_weight=None, cat_features=None):
@@ -68,8 +73,12 @@ class DecisionTree(object):
         if type(sample_weight) not in SUPPORTED_ARRAYS:
             self.sample_weight = 1 / np.array([1 for i in range(self.n_features)])
 
+        self.n_leaves = 0
         self.one_dim = len(np.shape(y)) == 1
         self.root = self._build_tree(X, y)
+
+        if self.prune:
+            self.root = self.__prune()
 
     def _build_tree(self, X, y, current_depth=0):
         """ Recursive method which builds out the decision tree and splits X and respective y
@@ -86,7 +95,7 @@ class DecisionTree(object):
 
         n_samples, n_features = np.shape(X)
 
-        if n_samples >= self.min_samples_split and current_depth <= self.max_depth:
+        if n_samples >= self.min_samples_split and current_depth <= self.max_depth and self.n_leaves < self.max_leaf_samples:
             # Calculate the impurity for each feature
             for feature_i in range(n_features):
                 # All values of feature_i
@@ -109,6 +118,7 @@ class DecisionTree(object):
                         # Select the y-values of the two sets
 
                         # Calculate impurity
+
                         impurity = self._impurity_calculation(y, Xy1, Xy2) * self.sample_weight[feature_i]
 
                         # If this threshold resulted in a higher information gain than previously
@@ -130,15 +140,15 @@ class DecisionTree(object):
             # Build subtrees for the right and left branches
             true_branch = self._build_tree(best_sets["leftX"], best_sets["lefty"], current_depth + 1)
             false_branch = self._build_tree(best_sets["rightX"], best_sets["righty"], current_depth + 1)
-            return DecisionNode(feature_i=best_criteria["feature_i"], threshold=best_criteria[
+
+            new_node = DecisionNode(feature_i=best_criteria["feature_i"], threshold=best_criteria[
                 "threshold"], true_branch=true_branch, false_branch=false_branch, target=y)
-
-
+            return new_node
 
         # We're at leaf => determine value
-        leaf_value = self.leaf_training(X, y)
-
-        return DecisionNode(value=leaf_value)
+        leaf_value = self.leaf_training(y)
+        self.n_leaves += 1
+        return DecisionNode(value=leaf_value, target=y)
 
     def predict_value(self, X, tree=None):
         """ Do a recursive search down the tree and make a prediction of the data sample by the
@@ -149,9 +159,6 @@ class DecisionTree(object):
 
         # If we have a value (i.e we're at a leaf) => return value as the prediction
         if tree.value is not None:
-            if type(tree.value) == type(self.leaf_estimator):
-                X = np.expand_dims(X, axis=0)
-                return tree.value.predict(X)[0][0]
             return tree.value
 
         # Choose the feature that we will test
@@ -191,66 +198,29 @@ class DecisionTree(object):
         for feature in range(self.n_features):
             perc_importance[feature] = importance_count.get(feature) / all_counts
 
-        # key = lambda array: array[1]
-        # importatces = np.hstack([np.array(list(perc_importance.keys())).reshape(-1, 1), np.array(list(perc_importance.values())).reshape(-1, 1)])
-        # return np.array(list(sorted(importatces, key=key)))
-
         return perc_importance
 
-    def print_tree(self, tree=None, indent=" "):
-        """ Recursively print the decision tree """
-        if not tree:
+    def __prune(self, tree=None):
+        if tree is None:
             tree = self.root
 
-        # If we're at leaf => print the label
-        if tree.value is not None:
-            return tree.value  # Go deeper down the tree
-        else:
-            # Print test
-            print("%s:%s? " % (tree.feature_i, tree.threshold))
-            # Print the true scenario
-            print("%sT->" % (indent), end="")
-            self.print_tree(tree.true_branch, indent + indent)
-            # Print the false scenario
-            print("%sF->" % (indent), end="")
-            self.print_tree(tree.false_branch, indent + indent)
+        # if node is not a leaf
+        if tree.true_branch != None:
+            tree.true_branch = self.__prune(tree.true_branch)
+        if tree.false_branch != None:
+            tree.false_branch = self.__prune(tree.false_branch)
 
+        print("------------------")
+        if not tree.is_leaf():
+            print(tree.true_branch.is_leaf(), tree.false_branch.is_leaf())
 
-class DispersionTreeRegressor(DecisionTree):
-    def _calculate_variance_reduction(self, y, Xy1, Xy2):
-        y1, X1 = Xy1[:, self.n_features:], Xy1[:, :self.n_features]
-        y2, X2 = Xy2[:, self.n_features:], Xy2[:, :self.n_features]
+        if not tree.is_leaf() and tree.true_branch.is_leaf() and tree.false_branch.is_leaf():
+            print("XXXXXXXXXXXXXXXXX")
+            if similarity_score(np.append(tree.false_branch.target, tree.true_branch.target),
+                                self.l2_leaf_reg) - self.gamma < 0:
+                return DecisionNode(value=self.leaf_training(tree.target), target=tree.target)
 
-        tot_disp = calculate_dispersion(y)
-        disp_1 = calculate_dispersion(y1)
-        disp_2 = calculate_dispersion(y2)
-
-        frac_1 = len(y1) / len(y)
-        frac_2 = len(y2) / len(y)
-
-        total = tot_disp
-        left = frac_1 * disp_1
-        right = frac_2 * disp_2
-
-        variance_reduction = total - (left + right)
-
-        # loss_reduction = self.loss_function(y1, mean_1) + self.loss_function(y2, mean_2)
-        return variance_reduction
-
-    def regression_leaf_training(self, X, y):
-        n_unique = np.unique(y)
-        if self.leaf_estimator == None or len(n_unique) == 1:
-            value = np.mean(y, axis=0)
-            return value if len(value) > 1 else value[0]
-
-        model = copy.copy(self.leaf_estimator)
-        model.fit(X, y)
-        return model
-
-    def fit(self, X, y, sample_weight=None, cat_features=None):
-        self._impurity_calculation = self._calculate_variance_reduction
-        self.leaf_training = self.regression_leaf_training
-        super(DispersionTreeRegressor, self).fit(X, y, sample_weight, cat_features)
+        return tree
 
 
 class SimilarityTreeRegressor(DecisionTree):
@@ -263,10 +233,9 @@ class SimilarityTreeRegressor(DecisionTree):
         gain_tot = similarity_score(y, self.l2_leaf_reg)
 
         variance_reduction = gain_1 + gain_2 - gain_tot
-
         return variance_reduction
 
-    def regression_leaf_training(self, X, y):
+    def regression_leaf_training(self, y):
         value = np.mean(y, axis=0)
         return value if len(value) > 1 else value[0]
 
@@ -276,48 +245,31 @@ class SimilarityTreeRegressor(DecisionTree):
         super(SimilarityTreeRegressor, self).fit(X, y, sample_weight, cat_features)
 
 
-class ErrorTreeRegressor(DecisionTree):
-    def _calculate_variance_reduction(self, y, Xy1, Xy2):
-        y1, X1 = Xy1[:, self.n_features:], Xy1[:, :self.n_features]
-        y2, X2 = Xy2[:, self.n_features:], Xy2[:, :self.n_features]
 
-        tot_disp = calculate_dispersion(y)
-        disp_1 = calculate_dispersion(y1)
-        disp_2 = calculate_dispersion(y2)
+class TreeRegressor(DecisionTree):
+    def _calculate_variance_reduction(self, y, y1, y2):
+        var_tot = calculate_variance(y)
+        var_1 = calculate_variance(y1)
+        var_2 = calculate_variance(y2)
+        frac_1 = len(y1) / len(y)
+        frac_2 = len(y2) / len(y)
 
-        mean_1 = np.zeros(len(y1))
-        mean_1.fill(y1.mean())
-        mean_2 = np.zeros(len(y2))
-        mean_2.fill(y2.mean())
-        mean_tot = np.zeros(len(y))
-        mean_tot.fill(y.mean())
-
-        total = tot_disp * self.loss_function(y, mean_tot) / (len(y) + self.l2_leaf_reg)
-        left = disp_1 * self.loss_function(y1, mean_1) / (len(y1) + self.l2_leaf_reg)
-        right = disp_2 * self.loss_function(y2, mean_2) / (len(y2) + self.l2_leaf_reg)
-
-        variance_reduction = total - (left + right)
-
-        # loss_reduction = self.loss_function(y1, mean_1) + self.loss_function(y2, mean_2)
+        # Calculate the variance reduction
+        variance_reduction = var_tot - (frac_1 * var_1 + frac_2 * var_2)
         return variance_reduction
 
-    def regression_leaf_training(self, X, y):
-        n_unique = np.unique(y)
-        if self.leaf_estimator == None or len(n_unique) == 1:
-            value = np.mean(y, axis=0)
-            return value if len(value) > 1 else value[0]
-
-        model = copy.copy(self.leaf_estimator)
-        model.fit(X, y)
-        return model
+    def _mean_of_y(self, y):
+        value = np.mean(y, axis=0)
+        return value if len(value) > 1 else value[0]
 
     def fit(self, X, y, sample_weight=None, cat_features=None):
         self._impurity_calculation = self._calculate_variance_reduction
-        self.leaf_training = self.regression_leaf_training
-        super(ErrorTreeRegressor, self).fit(X, y, sample_weight, cat_features)
+        self.leaf_training = self._mean_of_y
+        super(TreeRegressor, self).fit(X, y, sample_weight, cat_features)
 
 
-class StackedTreeClassifier(DecisionTree):
+
+class TreeClassifier(DecisionTree):
     def _calculate_information_gain(self, y, Xy1, Xy2):
         y1 = Xy1[:, self.n_features:]
         y2 = Xy2[:, self.n_features:]
@@ -328,24 +280,25 @@ class StackedTreeClassifier(DecisionTree):
 
         return info_gain
 
-    def classification_leaf_training(self, X, y):
-        n_unique = np.unique(y)
-        if self.leaf_estimator == None or len(n_unique) == 1:
-            most_common = None
-            max_count = 0
-            for label in np.unique(y):
-                # Count number of occurences of samples with label
-                count = len(y[y == label])
-                if count > max_count:
-                    most_common = label
-                    max_count = count
-            return most_common
-
-        model = copy.copy(self.leaf_estimator)
-        model.fit(X, y)
-        return model
+    def classification_leaf_training(self, y):
+        print(y)
+        most_common = None
+        max_count = 0
+        for label in np.unique(y):
+            # Count number of occurences of samples with label
+            count = len(y[y == label])
+            if count > max_count:
+                most_common = label
+                max_count = count
+        return most_common
 
     def fit(self, X, y, sample_weight=None, cat_features=None):
         self._impurity_calculation = self._calculate_information_gain
         self.leaf_training = self.classification_leaf_training
-        super(StackedTreeClassifier, self).fit(X, y, sample_weight, cat_features)
+        super(TreeClassifier, self).fit(X, y, sample_weight, cat_features)
+
+    def predict(self, X):
+        pass
+
+    def predict_proba(self, X):
+        pass
