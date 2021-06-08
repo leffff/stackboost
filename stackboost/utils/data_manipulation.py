@@ -5,6 +5,7 @@ import math
 import sys
 import torch
 import pandas as pd
+from numba import jit
 
 
 def to_tensor(X) -> torch.tensor:
@@ -187,6 +188,7 @@ def to_categorical(x, n_col=None):
     """ One-hot encoding of nominal values """
     if not n_col:
         n_col = np.amax(x) + 1
+
     one_hot = np.zeros((x.shape[0], n_col))
     one_hot[np.arange(x.shape[0]), x] = 1
     return one_hot
@@ -203,3 +205,9 @@ def make_diagonal(x):
     for i in range(len(m[0])):
         m[i, i] = x[i]
     return m
+
+@jit()
+def target_split(y):
+    col = int(np.shape(y)[1] / 2)
+    y, y_pred = y[:, :col], y[:, col:]
+    return y, y_pred

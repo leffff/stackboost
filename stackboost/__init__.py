@@ -1,6 +1,4 @@
-from stackboost.models.tree import SimilarityTreeRegressor, DispersionTreeRegressor, ErrorTreeRegressor, StackedTreeClassifier
-from stackboost.models.gradient_boosting import StackedGradientBoostingRegressor
-from stackboost.loss_functions import MSE, SquareLoss, CrossEntropy
+from stackboost.core.sgboost import StackBoostRegressor, StackBoostClassifier
 
 __author__ = 'Lev Novitskiy > levnovitskiy@gmail.com > https://github.com/leffff/ > https://www.kaggle.com/levnovitskiy'
 __license__ = 'MIT'
