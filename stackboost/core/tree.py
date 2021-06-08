@@ -1,16 +1,12 @@
 from __future__ import division, print_function
 import numpy as np
 
-from stackboost.utils.data_manipulation import divide_on_feature, train_test_split, standardize, to_array
-from stackboost.utils.data_operation import calculate_entropy, mean_squared_error, similarity_score, calculate_dispersion, calculate_variance
-from stackboost.categorical_encoding import StackedEncoder
+from stackboost.utils.data_manipulation import divide_on_feature, to_array
+from stackboost.utils.data_operation import calculate_entropy, mean_squared_error, similarity_score, calculate_variance
+from stackboost.utils.categorical_encoding import StackedEncoder
 import torch
 import pandas as pd
 import warnings
-import copy
-
-from functools import lru_cache
-
 
 warnings.filterwarnings("ignore")
 SUPPORTED_ARRAYS = [np.ndarray, torch.tensor, pd.Series, pd.DataFrame, list]
@@ -243,7 +239,6 @@ class SimilarityTreeRegressor(DecisionTree):
         self._impurity_calculation = self._calculate_variance_reduction
         self.leaf_training = self.regression_leaf_training
         super(SimilarityTreeRegressor, self).fit(X, y, sample_weight, cat_features)
-
 
 
 class TreeRegressor(DecisionTree):

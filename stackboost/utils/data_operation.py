@@ -106,11 +106,3 @@ def calculate_correlation_matrix(X, Y=None):
 def approximate_quantile_sketch(feature, y_ture, y_pred):
     weight = y_pred * (y_ture - y_pred)
     print(weight)
-
-
-class Sigmoid():
-    def __call__(self, x):
-        return 1 / (1 + np.exp(-x))
-
-    def gradient(self, x):
-        return self.__call__(x) * (1 - self.__call__(x))

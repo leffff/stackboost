@@ -1,9 +1,7 @@
 import numpy as np
 from sklearn.metrics import accuracy_score
 from numba.experimental import jitclass
-from numba.types import pyobject
-from stackboost.utils.data_operation import Sigmoid
-
+from stackboost.utils.activation_functions import Sigmoid
 
 
 class Loss(object):
@@ -31,7 +29,8 @@ class SquareLoss(Loss):
 
 
 class CrossEntropy(Loss):
-    def __init__(self): pass
+    def __init__(self):
+        pass
 
     def loss(self, y, p):
         p = np.clip(p, 1e-15, 1 - 1e-15)
@@ -53,10 +52,10 @@ class MSE(Loss):
         return np.mean((y - y_pred) ** 2)
 
     def gradient(self, y, y_pred):
-        return -(2 / len(y) * (y - y_pred))
+        return -2 / len(y) * (y - y_pred)
 
     def hess(self, y, y_pred):
-        return np.array([2 / len(y)])
+        return np.full(y.shape, 2 / len(y))
 
 
 class LogisticLoss():
