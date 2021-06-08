@@ -3,5 +3,4 @@
 [![PyPI pyversions](https://img.shields.io/pypi/pyversions/waveml.svg)](https://pypi.python.org/pypi/stackboost/)
 
 # stackboost
-Stacked decision trees algorithm
-
+Gradient Boosting over desicion trees.
