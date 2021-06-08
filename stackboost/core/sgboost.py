@@ -2,21 +2,41 @@ from __future__ import division, print_function
 import numpy as np
 
 from stackboost.utils.data_manipulation import divide_on_feature, to_array
-from stackboost.utils.quintile_sketch import min_max_sketch, hist_sketch
+from stackboost.utils.quintile_sketch import min_max_sketch
 from stackboost.utils.data_manipulation import to_categorical
 from stackboost.utils.loss_functions import LogisticLoss, SquareLoss
-import torch
-import pandas as pd
 import warnings
 from stackboost.utils.activation_functions import Sigmoid
+from stackboost.utils.errors import NotFittedError
 
 warnings.filterwarnings("ignore")
-SUPPORTED_ARRAYS = [np.ndarray, torch.tensor, pd.Series, pd.DataFrame, list]
 
 
 class DecisionNode:
-    def __init__(self, feature_i=None, threshold=None, value=None, target=None, true_branch=None,
-                 false_branch=None, importance=None, depth=None):
+    """
+    DecisionNode is a basis unit of a decision tree. Decision tree are made of DecisionNodes linked together
+    Parameters:
+    feature_i: int
+        The feature index the data is split on.
+    threshold: float
+        The threshold feature is devided on.
+    value: np.ndarray
+        The value of the node if the node is a leaf.
+    target: np.ndarray
+        Target va.ues of the leaf.
+    true_branch: DecisionNode
+        The decision node data goes to if it is greater than the threshold.
+    false_branch: DecisionNode
+        The decision node data goes to if it is smaller than the threshold.
+    importance:
+        The importance of the node in the tree used to calculate feature importances.
+    depth: int
+        The depth of the current node in the tree.
+    """
+
+    def __init__(self, feature_i: int = None, threshold: float = None, value: np.ndarray = None,
+                 target: np.ndarray = None, true_branch=None, false_branch=None, importance: float = None,
+                 depth: int = None):
         self.feature_i = feature_i
         self.threshold = threshold
         self.value = value
@@ -27,69 +47,67 @@ class DecisionNode:
         self.depth = depth
 
     def is_leaf(self):
+        """
+        The function used to check whether the DecisionNode is a leaf.
+        """
         return not self.value is None
 
-    def __str__(self):
-        return f"feature_i: {self.feature_i}\n" \
-               f"threshold: {self.threshold}\n" \
-               f"value: {self.value}\n" \
-               f"true_branch: {self.true_branch}\n" \
-               f"false_branch: {self.false_branch}\n" \
-               f"importance: {self.importance}\n" \
-               f"depth: {self.depth}\n" \
-               f"is_leaf: {self.is_leaf()}"
 
-
-# Super class of RegressionTree and ClassificationTree
 class DepthwiseTree(object):
-    """Super class of RegressionTree and ClassificationTree.
+    """
+    Super class of StackBoostTree.
     Parameters:
-    -----------
+    loss_function
+        The loss function used to optimize the leaf values.
     min_samples_split: int
         The minimum number of samples needed to make a split when building a tree.
     min_impurity: float
         The minimum impurity required to split the tree further.
     max_depth: int
         The maximum depth of a tree.
-    loss: function
-        Loss function that is used for Gradient Boosting models to calculate impurity.
+    l2_leaf_reg: float
+        The regularization parameter also known as lambda (λ). used for shrinking output values and encourage pruning.
+    n_quantiles: int
+        The number of thresholds we use to choose fom on each iterration.
+    prune: bool
+        The flag that defines whether we prune the Decision tree after it is built.
+    gamma_percentage: float
+        The parameter that encourages pruning (γ).
+    position: int
+        The position of an estimator in the set of estimators.
+    speedup: bool
+        The flag that enables gradient speedup. Multiply gradient by position of the tree in the sequence if True.
     """
 
-    def __init__(self, loss_function=LogisticLoss(), min_samples_split: int = 2, min_impurity: float = 1e-7,
+    def __init__(self, loss_function, min_samples_split: int = 2, min_impurity: float = 1e-7,
                  max_depth: int = float("inf"), l2_leaf_reg: float = 0.0, n_quantiles: int = 33,
-                 max_leaf_samples: int = 1000, prune: bool = False, gamma_percentage: float = 1.0, position=None,
-                 speedup: bool = False):
-
-        self.root = None  # Root node in dec. tree
-        # Minimum n of samples to justify split
-        self.min_samples_split = min_samples_split
-        # The minimum impurity to justify split
-        self.min_impurity = min_impurity
-        # The maximum depth to grow the tree to
-        self.max_depth = max_depth
-        # Function to calculate impurity (classif.=>info gain, regr=>variance reduct.)
-        self._impurity_calculation = None
-        # Function to determine prediction of y at leaf
-        self._leaf_value_calculation = None
-        # If y is one-hot encoded (multi-dim) or not (one-dim)
-        self.one_dim = None
-        # If Gradient Boost
+                 prune: bool = False, gamma_percentage: float = 1.0, position=None, speedup: bool = False):
+        # init params
         self.loss_function = loss_function
+        self.min_samples_split = min_samples_split
+        self.min_impurity = min_impurity
+        self.max_depth = max_depth
         self.l2_leaf_reg = l2_leaf_reg
         self.n_quantiles = n_quantiles
-        self.max_leaf_samples = max_leaf_samples
-        self.sample_weight = None
         self.prune = prune
         self.gamma_percentage = gamma_percentage
         self.position = position
         self.speedup = speedup
 
+        self.root = None
+        self._impurity_calculation = None
+        self._leaf_value_calculation = None
+        self.one_dim = None
+        self.fitted = False
         self.current_depth = 0
+        self.current_leaf_samples = 0
         self.n_nodes = 1
         self.total_gain = 0
         self.average_gain = 0
 
-    def fit(self, X, y, sample_weight):
+        self.sample_weight = None
+
+    def fit(self, X: np.ndarray, y: np.ndarray, sample_weight: np.ndarray) -> None:
         """ Build decision tree """
         self.one_dim = len(np.shape(y)) == 1
         self.n_samples, self.n_features = X.shape
@@ -102,7 +120,9 @@ class DepthwiseTree(object):
         if self.prune:
             self.root = self.__prune()
 
-    def _build_tree(self, X, y, current_depth=0):
+        self.fitted = True
+
+    def _build_tree(self, X: np.ndarray, y: np.ndarray, current_depth: int = 0) -> DecisionNode:
         """ Recursive method which builds out the decision tree and splits X and respective y
         on the feature of X which (based on impurity) best separates the data"""
 
@@ -182,7 +202,7 @@ class DepthwiseTree(object):
 
         return DecisionNode(value=leaf_value, target=y)
 
-    def __prune(self, tree=None):
+    def __prune(self, tree: DecisionNode = None) -> DecisionNode:
         if tree is None:
             tree = self.root
 
@@ -199,7 +219,7 @@ class DepthwiseTree(object):
 
         return tree
 
-    def __calculate_importance(self, importance, tree=None) -> np.ndarray:
+    def __calculate_importance(self, importance: np.ndarray, tree: DecisionNode = None) -> np.ndarray:
         # if tree is none, than we treat it as a root
         if tree is None:
             tree = self.root
@@ -213,10 +233,13 @@ class DepthwiseTree(object):
                self.__calculate_importance(importance, tree=tree.false_branch)
 
     def get_feature_importance(self) -> np.ndarray:
+        if not self.fitted:
+            raise NotFittedError()
+
         feature_importance = self.__calculate_importance(self.sample_weight)
         return feature_importance
 
-    def predict_value(self, x, tree=None) -> np.ndarray:
+    def predict_value(self, X: np.ndarray, tree: DecisionNode = None) -> np.ndarray:
         """ Do a recursive search down the tree and make a prediction of the data sample by the
             value of the leaf that we end up at """
 
@@ -228,7 +251,7 @@ class DepthwiseTree(object):
             return tree.value
 
         # Choose the feature that we will test
-        feature_value = x[tree.feature_i]
+        feature_value = X[tree.feature_i]
         # Determine if we will follow left or right branch
         branch = tree.false_branch
         if isinstance(feature_value, int) or isinstance(feature_value, float):
@@ -238,26 +261,28 @@ class DepthwiseTree(object):
             branch = tree.true_branch
 
         # Test subtree
-        return self.predict_value(x, branch)
+        return self.predict_value(X, branch)
 
-    def predict(self, X):
-        # Classify samples one by one and return the set of labels
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        if not self.fitted:
+            raise NotFittedError()
+
         y_pred = np.vstack([self.predict_value(sample) for sample in X])
         return y_pred
 
 
 class StackBoostTree(DepthwiseTree):
-    def _split(self, y):
+    def _split(self, y: np.ndarray) -> [np.ndarray, np.ndarray]:
         col = int(np.shape(y)[1] / 2)
         y, y_pred = y[:, :col], y[:, col:]
         return y, y_pred
 
-    def _gain(self, y, y_pred):
+    def _gain(self, y: np.ndarray, y_pred: np.ndarray) -> float:
         nominator = np.power((y * self.loss_function.gradient(y, y_pred)).sum(), 2)
         denominator = self.loss_function.hess(y, y_pred).sum()
         return 0.5 * (nominator / denominator)
 
-    def _gain_by_taylor(self, y, y1, y2):
+    def _gain_by_taylor(self, y: np.ndarray, y1: np.ndarray, y2: np.ndarray) -> float:
         # Split
         y, y_pred = self._split(y)
         y1, y1_pred = self._split(y1)
@@ -268,7 +293,7 @@ class StackBoostTree(DepthwiseTree):
         gain = self._gain(y, y_pred)
         return true_gain + false_gain - gain
 
-    def _approximate_update(self, y):
+    def _approximate_update(self, y: np.ndarray) -> float:
         # y split into y, y_pred
         y, y_pred = self._split(y)
         # Newton's Method
@@ -283,33 +308,64 @@ class StackBoostTree(DepthwiseTree):
 
         return update_approximation
 
-    def fit(self, X, y, sample_weight):
+    def fit(self, X: np.ndarray, y: np.ndarray, sample_weight: np.ndarray) -> None:
         self._impurity_calculation = self._gain_by_taylor
         self._leaf_value_calculation = self._approximate_update
         super(StackBoostTree, self).fit(X, y, sample_weight)
 
 
 class StackBoost(object):
-    def __init__(self, n_estimators=100, learning_rate=0.001, min_samples_split=2,
-                 min_impurity=1e-7, max_depth=2, loss_function=LogisticLoss(), l2_leaf_reg: float = 0.0,
-                 n_quantiles: int = 33, max_leaf_samples: int = 1000, prune: bool = False,
-                 gamma_percentage: float = 1.0, n_folds=4,
-                 metrics: list = [], verbose: bool = False, regression=False, speedup: bool = False):
+    """
+    Super class of StackBoostRegressor and StackBoostClassifier.
+    Parameters:
+    n_estimators: int
+        The number of estimators
+    learning rate: float
+        The number by which we scale each tree in the sequence. Also known as eta (η).
+    loss_function
+        The loss function used to optimize the leaf values.
+    min_samples_split: int
+        The minimum number of samples needed to make a split when building a tree.
+    min_impurity: float
+        The minimum impurity required to split the tree further.
+    max_depth: int
+        The maximum depth of a tree.
+    l2_leaf_reg: float
+        The regularization parameter also known as lambda (λ). used for shrinking output values and encourage pruning.
+    n_quantiles: int
+        The number of thresholds we use to choose fom on each iterration.
+    prune: bool
+        The flag that defines whether we prune the Decision tree after it is built.
+    gamma_percentage: float
+        The parameter that encourages pruning (γ).
+    speedup: bool
+        The flag that enables gradient speedup. Multiply gradient by position of the tree in the sequence if True.
+    mertics: [list, tuple]
+        The array of metric functions.
+    verbose: bool
+        The flag, which enables training information.
+    regression: bool
+        The flag, which defines a task type: regression if True classification in ohter case
+    """
+    def __init__(self, n_estimators: int = 100, learning_rate: float = 0.001, loss_function=LogisticLoss(),
+                 min_samples_split: int = 2, min_impurity: float = 1e-7, max_depth: int = 2, l2_leaf_reg: float = 0.0,
+                 n_quantiles: int = 33, prune: bool = False, gamma_percentage: float = 1.0, speedup: bool = False,
+                 metrics: list = [], verbose: bool = False, regression=False):
 
         self.n_estimators = n_estimators  # Number of trees
         self.learning_rate = learning_rate  # Step size for weight update
         self.min_samples_split = min_samples_split  # The minimum n of sampels to justify split
         self.min_impurity = min_impurity  # Minimum variance reduction to continue
-        self.max_depth = max_depth  # Maximum depth for tree
+        self.max_depth = max_depth
         self.l2_leaf_reg = l2_leaf_reg
         self.n_quantiles = n_quantiles
-        self.max_leaf_samples = max_leaf_samples
         self.prune = prune
         self.gamma_percentage = gamma_percentage
-        self.n_folds = n_folds
         self.metrics = metrics
         self.verbose = verbose
         self.regression = regression
+
+        self.fitted = False
 
         self.sample_weight = None
         self.cat_features = None
@@ -331,7 +387,6 @@ class StackBoost(object):
                 loss_function=self.loss_function,
                 l2_leaf_reg=self.l2_leaf_reg,
                 n_quantiles=self.n_quantiles,
-                max_leaf_samples=self.max_leaf_samples,
                 prune=self.prune,
                 gamma_percentage=self.gamma_percentage,
                 position=_,
@@ -340,7 +395,8 @@ class StackBoost(object):
 
             self.trees.append(tree)
 
-    def fit(self, X, y, cat_features, sample_weight, eval_set, use_best_model):
+    def fit(self, X: np.ndarray, y: np.ndarray, cat_features: [list, np.ndarray], sample_weight: np.ndarray,
+            eval_set: [list, tuple], use_best_model: bool) -> None:
         X, y = to_array(X), to_array(y)
         self.n_samples, self.n_features = X.shape
 
@@ -404,15 +460,19 @@ class StackBoost(object):
         # Fix:
 
         if self.use_best_model:
-            print(self.test_errors)
-            self.best_iteration = np.argmin(self.test_errors)
+            self.best_iteration = np.argmax(self.test_errors)
         else:
             self.best_iteration = self.n_estimators
 
-    def predict(self, X):
+        self.fitted = True
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        if not self.fitted:
+            raise NotFittedError()
+
         return self.__inner_predict(X, self.best_iteration)
 
-    def __inner_predict(self, X, iteration):
+    def __inner_predict(self, X: np.ndarray, iteration: int) -> np.ndarray:
         y_pred = np.full(np.shape(X)[0], self.initial_prediction).reshape(-1, 1) if self.regression else None
 
         # Make predictions
@@ -427,65 +487,131 @@ class StackBoost(object):
 
 
 class StackBoostRegressor(StackBoost):
-    def __init__(self, n_estimators=100, learning_rate=0.001, min_samples_split=2,
-                 min_impurity=1e-7, max_depth=2, loss_function=SquareLoss(), l2_leaf_reg: float = 0.0,
-                 n_quantiles: int = 33,
-                 max_leaf_samples: int = 1000, prune: bool = False, gamma_percentage: float = 1., metrics: list = [],
-                 verbose: bool = False, speedup: bool = False):
+    """
+    Super class of StackBoostRegressor and StackBoostClassifier.
+    Parameters:
+    n_estimators: int
+        The number of estimators
+    learning rate: float
+        The number by which we scale each tree in the sequence. Also known as eta (η).
+    loss_function
+        The loss function used to optimize the leaf values.
+    min_samples_split: int
+        The minimum number of samples needed to make a split when building a tree.
+    min_impurity: float
+        The minimum impurity required to split the tree further.
+    max_depth: int
+        The maximum depth of a tree.
+    l2_leaf_reg: float
+        The regularization parameter also known as lambda (λ). used for shrinking output values and encourage pruning.
+    n_quantiles: int
+        The number of thresholds we use to choose fom on each iterration.
+    prune: bool
+        The flag that defines whether we prune the Decision tree after it is built.
+    gamma_percentage: float
+        The parameter that encourages pruning (γ).
+    speedup: bool
+        The flag that enables gradient speedup. Multiply gradient by position of the tree in the sequence if True.
+    mertics: [list, tuple]
+        The array of metric functions.
+    verbose: bool
+        The flag, which enables training information.
+    """
+    def __init__(self, n_estimators: int = 100, learning_rate: float = 0.001, loss_function=SquareLoss(),
+                 min_samples_split: int = 2, min_impurity: float = 1e-7, max_depth: int = 2,  l2_leaf_reg: float = 0.0,
+                 n_quantiles: int = 33, prune: bool = False, gamma_percentage: float = 1., speedup: bool = False,
+                 metrics: list = [], verbose: bool = False):
         super(StackBoostRegressor, self).__init__(n_estimators=n_estimators,
-                                           learning_rate=learning_rate,
-                                           min_samples_split=min_samples_split,
-                                           min_impurity=min_impurity,
-                                           max_depth=max_depth,
-                                           loss_function=loss_function,
-                                           l2_leaf_reg=l2_leaf_reg,
-                                           n_quantiles=n_quantiles,
-                                           max_leaf_samples=max_leaf_samples,
-                                           prune=prune,
-                                           gamma_percentage=gamma_percentage,
-                                           metrics=metrics,
-                                           verbose=verbose,
-                                           regression=True,
-                                           speedup=speedup)
+                                                  learning_rate=learning_rate,
+                                                  min_samples_split=min_samples_split,
+                                                  min_impurity=min_impurity,
+                                                  max_depth=max_depth,
+                                                  loss_function=loss_function,
+                                                  l2_leaf_reg=l2_leaf_reg,
+                                                  n_quantiles=n_quantiles,
+                                                  prune=prune,
+                                                  gamma_percentage=gamma_percentage,
+                                                  metrics=metrics,
+                                                  verbose=verbose,
+                                                  regression=True,
+                                                  speedup=speedup)
 
-    def fit(self, X, y, cat_features=None, sample_weight=None, eval_set=None, use_best_model=False):
+    def fit(self, X, y, cat_features: [list, tuple, np.ndarray] = None, sample_weight: np.ndarray = None,
+            eval_set: [list, tuple] = None, use_best_model: bool = False) -> None:
         y = y.reshape(-1, 1)
         super(StackBoostRegressor, self).fit(X, y, cat_features, sample_weight, eval_set, use_best_model)
 
 
 class StackBoostClassifier(StackBoost):
-    def __init__(self, n_estimators=100, learning_rate=0.001, min_samples_split=2,
-                 min_impurity=1e-7, max_depth=2, loss_function=LogisticLoss(), l2_leaf_reg: float = 0.0,
-                 n_quantiles: int = 33, max_leaf_samples: int = 1000, prune: bool = False,
-                 gamma_percentage: float = 1., metrics: list = [], verbose: bool = False, speedup: bool = False,
-                 activation=Sigmoid()):
+    """
+    Super class of StackBoostRegressor and StackBoostClassifier.
+    Parameters:
+    n_estimators: int
+        The number of estimators
+    learning rate: float
+        The number by which we scale each tree in the sequence. Also known as eta (η).
+    loss_function
+        The loss function used to optimize the leaf values.
+    min_samples_split: int
+        The minimum number of samples needed to make a split when building a tree.
+    min_impurity: float
+        The minimum impurity required to split the tree further.
+    max_depth: int
+        The maximum depth of a tree.
+    l2_leaf_reg: float
+        The regularization parameter also known as lambda (λ). used for shrinking output values and encourage pruning.
+    n_quantiles: int
+        The number of thresholds we use to choose fom on each iterration.
+    prune: bool
+        The flag that defines whether we prune the Decision tree after it is built.
+    gamma_percentage: float
+        The parameter that encourages pruning (γ).
+    speedup: bool
+        The flag that enables gradient speedup. Multiply gradient by position of the tree in the sequence if True.
+    metrics: [list, tuple]
+        The array of metric functions.
+    verbose: bool
+        The flag, which enables training information.
+    activation:
+        The activation function used to calculate probabilities.4
+    """
+    def __init__(self, n_estimators: int = 100, learning_rate: float = 0.001, min_samples_split: int = 2,
+                 min_impurity: float = 1e-7, max_depth: int = 2, loss_function=LogisticLoss(), l2_leaf_reg: float = 0.0,
+                 n_quantiles: int = 33, prune: bool = False, gamma_percentage: float = 1., speedup: bool = False,
+                 metrics: list = [], verbose: bool = False, activation=Sigmoid()):
         super(StackBoostClassifier, self).__init__(n_estimators=n_estimators,
-                                            learning_rate=learning_rate,
-                                            min_samples_split=min_samples_split,
-                                            min_impurity=min_impurity,
-                                            max_depth=max_depth,
-                                            loss_function=loss_function,
-                                            l2_leaf_reg=l2_leaf_reg,
-                                            n_quantiles=n_quantiles,
-                                            max_leaf_samples=max_leaf_samples,
-                                            prune=prune,
-                                            gamma_percentage=gamma_percentage,
-                                            metrics=metrics,
-                                            verbose=verbose,
-                                            regression=False,
-                                            speedup=speedup)
+                                                   learning_rate=learning_rate,
+                                                   min_samples_split=min_samples_split,
+                                                   min_impurity=min_impurity,
+                                                   max_depth=max_depth,
+                                                   loss_function=loss_function,
+                                                   l2_leaf_reg=l2_leaf_reg,
+                                                   n_quantiles=n_quantiles,
+                                                   prune=prune,
+                                                   gamma_percentage=gamma_percentage,
+                                                   metrics=metrics,
+                                                   verbose=verbose,
+                                                   regression=False,
+                                                   speedup=speedup)
         self.activation = activation
 
-    def fit(self, X, y, cat_features=None, sample_weight=None, eval_set=None, use_best_model=False):
+    def fit(self, X, y, cat_features: [list, tuple, np.ndarray] = None, sample_weight: np.ndarray = None,
+            eval_set: [list, tuple] = None, use_best_model: bool = False) -> None:
         y = to_categorical(y)
         super(StackBoostClassifier, self).fit(X, y, cat_features, sample_weight, eval_set, use_best_model)
 
-    def predict_proba(self, X):
+    def predict_proba(self, X) -> np.ndarray:
+        if not self.fitted:
+            raise NotFittedError()
+
         y_pred = super(StackBoostClassifier, self).predict(X)
         y_pred = self.activation(y_pred)
         return y_pred
 
-    def predict(self, X):
+    def predict(self, X) -> np.ndarray:
+        if not self.fitted:
+            raise NotFittedError()
+
         y_pred = self.predict_proba(X)
         y_pred = np.argmax(y_pred, axis=1)
         return y_pred

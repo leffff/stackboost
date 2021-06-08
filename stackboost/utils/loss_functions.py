@@ -19,7 +19,7 @@ class SquareLoss(Loss):
     def __init__(self): pass
 
     def loss(self, y, y_pred):
-        return np.sum(0.5 * np.power((y - y_pred), 2))
+        return np.mean(0.5 * np.power((y - y_pred), 2))
 
     def gradient(self, y, y_pred):
         return -(y - y_pred)
@@ -34,7 +34,7 @@ class CrossEntropy(Loss):
 
     def loss(self, y, p):
         p = np.clip(p, 1e-15, 1 - 1e-15)
-        return - y * np.log(p) - (1 - y) * np.log(1 - p)
+        return np.mean(- y * np.log(p) - (1 - y) * np.log(1 - p))
 
     def acc(self, y, p):
         return accuracy_score(np.argmax(y, axis=1), np.argmax(p, axis=1))
@@ -65,7 +65,7 @@ class LogisticLoss():
     def loss(self, y, y_pred):
         y_pred = np.clip(y_pred, 1e-15, 1 - 1e-15)
         p = self.log_func(y_pred)
-        return y * np.log(p) + (1 - y) * np.log(1 - p)
+        return np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
 
     # gradient w.r.t y_pred
     def gradient(self, y, y_pred):
