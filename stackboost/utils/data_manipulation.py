@@ -1,29 +1,8 @@
 from __future__ import division
 from itertools import combinations_with_replacement
 import numpy as np
-import math
-import sys
-import torch
 import pandas as pd
 from numba import jit
-
-
-def to_tensor(X) -> torch.tensor:
-    dtype = type(X)
-
-    if dtype == pd.DataFrame:
-        return torch.tensor(X.to_numpy())
-
-    elif dtype == pd.Series:
-        return torch.tensor(X.values)
-
-    elif dtype == np.ndarray:
-        return torch.tensor(X)
-
-    elif dtype == list:
-        return torch.tensor(X)
-
-    return X
 
 
 def to_array(X) -> np.ndarray:
@@ -34,9 +13,6 @@ def to_array(X) -> np.ndarray:
 
     elif dtype == pd.Series:
         return X.to_numpy()
-
-    elif dtype == torch.Tensor:
-        return X.detach().numpy()
 
     elif dtype == list:
         return np.array(X)

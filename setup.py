@@ -5,7 +5,7 @@ with open("README.md", "r") as f:
 
 setuptools.setup(
     name="stackboost",
-    version="0.1.2",
+    version="0.1.4",
     author="leffff",
     author_email="levnovitskiy@gmail.com",
     description="Stacked decision trees algorithm",
@@ -14,7 +14,7 @@ setuptools.setup(
     url="https://github.com/leffff/stackboost",
     license='MIT',
     packages=setuptools.find_packages(),
-    install_requires=["numpy", "pandas", "torch", "plotly", "numba"],
+    install_requires=["numpy", "pandas", "torch", "numba"],
     classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
