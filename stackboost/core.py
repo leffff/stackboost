@@ -410,11 +410,7 @@ class StackBoost(object):
         self.gamma_percentage = gamma_percentage
         self.undersampling_percentage = undersampling_percentage
         self.sketch_type = sketch_type
-        sketch_types = {
-            "minmax": min_max_sketch,
-            "hist": hist_sketch,
-            "greedy": greedy_sketch,
-        }
+        sketch_types = {"minmax": min_max_sketch, "hist": hist_sketch, "greedy": greedy_sketch}
         self.sketch_algorithm = sketch_types.get(self.sketch_type)
         self.speedup = speedup
         self.metrics = metrics
@@ -479,7 +475,9 @@ class StackBoost(object):
         if cat_features is None:
             self.cat_features = []
 
-        X_test, y_test = eval_set
+        if cat_features is not None:
+            X_test, y_test = eval_set
+
         self.use_best_model = use_best_model
 
         self.initial_prediction = y.mean() if self.regression else float(np.argmax(np.mean(y, axis=0)))
@@ -516,7 +514,7 @@ class StackBoost(object):
                                         scoring_function in self.metrics]
 
                     train_scoring_output = f"train metrics: {train_scores}"
-                    if not eval_set is None:
+                    if eval_set is not None:
                         if self.regression:
                             test_scores = [scoring_function(y_test, self.__inner_predict(X_test, i)) for
                                            scoring_function in self.metrics]
