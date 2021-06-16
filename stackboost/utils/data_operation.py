@@ -2,9 +2,6 @@ from __future__ import division
 import numpy as np
 import math
 from numba import jit
-from numba.experimental import jitclass
-import sys
-
 
 # @jit(nopython=True)
 def calculate_entropy(y):
@@ -101,8 +98,3 @@ def calculate_correlation_matrix(X, Y=None):
     correlation_matrix = np.divide(covariance, std_dev_X.dot(std_dev_y.T))
 
     return np.array(correlation_matrix, dtype=float)
-
-
-def approximate_quantile_sketch(feature, y_ture, y_pred):
-    weight = y_pred * (y_ture - y_pred)
-    print(weight)
