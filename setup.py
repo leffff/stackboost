@@ -14,7 +14,7 @@ setuptools.setup(
     url="https://github.com/leffff/stackboost",
     license='MIT',
     packages=setuptools.find_packages(),
-    install_requires=["numpy", "pandas", "torch", "numba"],
+    install_requires=["numpy", "numba"],
     classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
