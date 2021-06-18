@@ -15,6 +15,7 @@ class Loss(object):
         return 0
 
 
+@jitclass()
 class SquareLoss(Loss):
     def __init__(self): pass
 

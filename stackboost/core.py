@@ -1,55 +1,53 @@
 from __future__ import division, print_function
-import numpy as np
-import pandas as pd
-from sklearn.preprocessing import LabelEncoder
 
 from stackboost.utils.data_manipulation import divide_on_feature, to_array, to_categorical
-from stackboost.utils.optimization import min_max_sketch, hist_sketch, greedy_sketch, cluster_sketch
-from stackboost.utils.optimization import make_bins, undersampling
+from stackboost.utils.optimization import min_max_sketch, hist_sketch, greedy_sketch
+from stackboost.utils.optimization import undersampling
 from stackboost.utils.loss_functions import LogisticLoss, SquareLoss
-from stackboost.utils.activation_functions import Sigmoid, Softmax
+from stackboost.utils.activation_functions import Sigmoid
 from stackboost.utils.errors import NotFittedError
 
+import numpy as np
+from dataclasses import dataclass
+from typing import Any
 import warnings
 
 warnings.filterwarnings("ignore")
 
 
-class DecisionNode:
+@dataclass
+class DecisionNode(object):
     """
     DecisionNode is a basis unit of a decision tree. Decision tree are made of DecisionNodes linked together
+
+    Parameters:
+    -----------
+    param feature_i:
+        The feature index the data is split on.
+    param threshold:
+        The threshold feature is devided on.
+    param value:
+        The value of the node if the node is a leaf.
+    param target:
+        Target va.ues of the leaf.
+    param true_branch:
+        The decision node data goes to if it is greater than the threshold.
+    param false_branch:
+        The decision node data goes to if it is smaller than the threshold.
+    param importance:
+        The importance of the node in the tree used to calculate feature importances.
+    param depth:
+        The depth of the current node in the tree.
     """
 
-    def __init__(self, feature_i: int = None, threshold: float = None, value: np.ndarray = None,
-                 target: np.ndarray = None, true_branch=None, false_branch=None, importance: float = None,
-                 depth: int = None):
-        """
-        :param feature_i:
-            The feature index the data is split on.
-        :param threshold:
-            The threshold feature is devided on.
-        :param value:
-            The value of the node if the node is a leaf.
-        :param target:
-            Target va.ues of the leaf.
-        :param true_branch:
-            The decision node data goes to if it is greater than the threshold.
-        :param false_branch:
-            The decision node data goes to if it is smaller than the threshold.
-        :param importance:
-            The importance of the node in the tree used to calculate feature importances.
-        :param depth:
-            The depth of the current node in the tree.
-        """
-
-        self.feature_i = feature_i
-        self.threshold = threshold
-        self.value = value
-        self.target = target
-        self.true_branch = true_branch
-        self.false_branch = false_branch
-        self.importance = importance
-        self.depth = depth
+    feature_i: int = None
+    threshold: float = None
+    value: np.ndarray = None
+    target: np.ndarray = None
+    true_branch: Any = None
+    false_branch: Any = None
+    importance: float = None
+    depth: int = None
 
     def is_leaf(self):
         """
@@ -58,62 +56,57 @@ class DecisionNode:
         return not self.value is None
 
 
+@dataclass
 class DepthwiseTree(object):
     """
     Super class of StackBoostTree.
+
+    Parameters:
+    -----------
+    param loss_function
+        The loss function used to optimize the leaf values.
+    param min_samples_split: int
+        The minimum number of samples needed to make a split when building a tree.
+    param min_impurity: float
+        The minimum impurity required to split the tree further.
+    param max_depth: int
+        The maximum depth of a tree.
+    param l2_leaf_reg: float
+        The regularization parameter also known as lambda (λ). used for shrinking output values and encourage pruning.
+    param n_quintiles: int
+        The number of thresholds we use to choose fom on each iterration.
+    param prune: bool
+        The flag that defines whether we prune the Decision tree after it is built.
+    param gamma_percentage: float
+        The parameter that encourages pruning (γ).
+    param position: int
+        The position of an estimator in the set of estimators.
+    param speedup: bool
+        The flag that enables gradient speedup. Multiply gradient by position of the tree in the sequence if True.
     """
 
-    def __init__(self, loss_function, sketch_algorithm, min_samples_split: int = 2, min_impurity: float = 1e-7,
-                 max_depth: int = float("inf"), l2_leaf_reg: float = 0.0, n_quintiles: int = 33,
-                 prune: bool = False, gamma_percentage: float = 1.0, position=None, speedup: bool = False):
-        """
-        :param loss_function
-            The loss function used to optimize the leaf values.
-        :param min_samples_split: int
-            The minimum number of samples needed to make a split when building a tree.
-        :param min_impurity: float
-            The minimum impurity required to split the tree further.
-        :param max_depth: int
-            The maximum depth of a tree.
-        :param l2_leaf_reg: float
-            The regularization parameter also known as lambda (λ). used for shrinking output values and encourage pruning.
-        :param n_quintiles: int
-            The number of thresholds we use to choose fom on each iterration.
-        :param prune: bool
-            The flag that defines whether we prune the Decision tree after it is built.
-        :param gamma_percentage: float
-            The parameter that encourages pruning (γ).
-        :param position: int
-            The position of an estimator in the set of estimators.
-        :param speedup: bool
-            The flag that enables gradient speedup. Multiply gradient by position of the tree in the sequence if True.
-        """
+    loss_function: Any
+    sketch_algorithm: Any = min_max_sketch
+    min_samples_split: int = 2
+    min_impurity: float = 1e-7
+    max_depth: int = float("inf")
+    l2_leaf_reg: float = 0.0
+    n_quintiles: int = 33
+    prune: bool = False
+    gamma_percentage: float = 0.0
+    position: int = None
+    speedup: bool = False
 
-        # init params
-        self.loss_function = loss_function
-        self.sketch_algorithm = sketch_algorithm
-        self.min_samples_split = min_samples_split
-        self.min_impurity = min_impurity
-        self.max_depth = max_depth
-        self.l2_leaf_reg = l2_leaf_reg
-        self.n_quintiles = n_quintiles
-        self.prune = prune
-        self.gamma_percentage = gamma_percentage
-        self.position = position
-        self.speedup = speedup
+    root: DecisionNode = None
+    _impurity_calculation: Any = None
+    _leaf_value_calculation: Any = None
+    one_dim: bool = None
+    fitted: bool = False
+    n_nodes: int = 1
+    total_gain: float = 0.0
+    average_gain: float = 0.0
 
-        self.root = None
-        self._impurity_calculation = None
-        self._leaf_value_calculation = None
-        self.one_dim = None
-        self.fitted = False
-        self.current_depth = 0
-        self.current_leaf_samples = 0
-        self.n_nodes = 1
-        self.total_gain = 0
-        self.average_gain = 0
-
-        self.sample_weight = None
+    sample_weight: np.ndarray = None
 
     def fit(self, X: np.ndarray, y: np.ndarray, sample_weight: np.ndarray) -> None:
         """
@@ -147,9 +140,6 @@ class DepthwiseTree(object):
         :param current_depth: current depth of built tree
         :return:
         """
-
-        if current_depth > self.current_depth:
-            self.current_depth = current_depth
 
         largest_impurity = 0
         best_criteria = None  # Feature index and threshold
@@ -336,12 +326,13 @@ class StackBoostTree(DepthwiseTree):
     def _approximate_update(self, y: np.ndarray) -> float:
         # y split into y, y_pred
         y, y_pred = self._split(y)
-        # Newton's Method
+
         if self.speedup:
             speedup_multiplier = (self.position + 1)
         else:
             speedup_multiplier = 1
 
+        # Newton's Method
         gradient = np.sum(y * speedup_multiplier * self.loss_function.gradient(y, y_pred), axis=0)
         hessian = np.sum(self.loss_function.hess(y, y_pred), axis=0)
         update_approximation = gradient / (hessian + self.l2_leaf_reg)
@@ -362,8 +353,8 @@ class StackBoost(object):
     def __init__(self, n_estimators: int = 100, learning_rate: float = 0.001, loss_function=LogisticLoss(),
                  min_samples_split: int = 2, min_impurity: float = 1e-7, max_depth: int = 2, l2_leaf_reg: float = 0.0,
                  n_quintiles: int = 33, prune: bool = False, gamma_percentage: float = 1.0,
-                 undersampling_percentage: float = 0.0, sketch_type: str = "minmax", speedup: bool = False,
-                 metrics: list = None, verbose: bool = False, regression=False):
+                 undersampling_percentage: float = 0.0, sketch_type: str = "minmax",
+                 speedup: bool = False, metrics: list = None, verbose: bool = False, regression=False):
         """
         :param n_estimators:
             The number of estimators
@@ -475,7 +466,8 @@ class StackBoost(object):
         if cat_features is None:
             self.cat_features = []
 
-        if cat_features is not None:
+        X_test, y_test = None, None
+        if eval_set is not None:
             X_test, y_test = eval_set
 
         self.use_best_model = use_best_model
@@ -506,7 +498,7 @@ class StackBoost(object):
                 train_scoring_output = ""
                 test_scoring_output = ""
 
-                if self.metrics != []:
+                if self.metrics:
                     if self.regression:
                         train_scores = [scoring_function(y, y_pred) for scoring_function in self.metrics]
                     else:
@@ -582,8 +574,8 @@ class StackBoostRegressor(StackBoost):
     def __init__(self, n_estimators: int = 100, learning_rate: float = 0.001, loss_function=SquareLoss(),
                  min_samples_split: int = 2, min_impurity: float = 1e-7, max_depth: int = 2, l2_leaf_reg: float = 0.0,
                  n_quintiles: int = 33, prune: bool = False, gamma_percentage: float = 1.,
-                 undersampling_percentage: float = 0.0, sketch_type: str = "minmax", speedup: bool = False,
-                 metrics: list = None, verbose: bool = False):
+                 undersampling_percentage: float = 0.0, sketch_type: str = "minmax",
+                 speedup: bool = False, metrics: list = None, verbose: bool = False):
         """
         :param n_estimators:
             The number of estimators
